@@ -289,6 +289,7 @@ rmq_start() {
 		rmq_stop 
 		rmq_wipe_data
 		rmq_join_existing "$join_list"
+		rc=$?
 
                 # Restore users (if any)
                 BaseDataDir=`dirname $RMQ_DATA_DIR`
@@ -300,7 +301,7 @@ rmq_start() {
                         rm -f $BaseDataDir/users.erl
                 fi
 
-		if [ $? -ne 0 ]; then
+		if [ $rc -ne 0 ]; then
 			ocf_log info "node failed to join even after reseting local data. Check SELINUX policy"
 			return $OCF_ERR_GENERIC
 		fi

@@ -37,13 +37,9 @@
 # in the future.
 RMQ_TRY_RESTART_ERROR_CODE=126
 
-RMQ_SERVER=/usr/sbin/rabbitmq-server
 RMQ_CTL=/usr/sbin/rabbitmqctl
 RMQ_EVAL="${RMQ_CTL} eval -q"
 RMQ_DATA_DIR="/var/lib/rabbitmq/mnesia"
-RMQ_PID_DIR="/var/run/rabbitmq"
-RMQ_PID_FILE="/var/run/rabbitmq/rmq.pid"
-RMQ_LOG_DIR="/var/log/rabbitmq"
 if [ "$__OCF_ACTION" != "meta-data" ]; then
 	NODENAME=$(ocf_attribute_target)
 fi
@@ -54,7 +50,7 @@ RMQ_CRM_ATTR_COOKIE="rmq-node-attr-${OCF_RESOURCE_INSTANCE}"
 # this attr represents the last known active local rmq node name
 # when rmp stops or the node is fenced, the attr stays forever so
 # we can continue to map an offline pcmk node to it's rmq node name
-# equivalent. 
+# equivalent.
 RMQ_CRM_ATTR_COOKIE_LAST_KNOWN="rmq-node-attr-last-known-${OCF_RESOURCE_INSTANCE}"
 
 meta_data() {
@@ -105,7 +101,7 @@ END
 
 rmq_wipe_data()
 {
-	rm -rf $RMQ_DATA_DIR > /dev/null 2>&1 
+	rm -rf $RMQ_DATA_DIR > /dev/null 2>&1
 }
 
 rmq_local_node()
@@ -167,40 +163,6 @@ rmq_delete_nodename()
 	${HA_SBIN_DIR}/crm_attribute -N $NODENAME -l reboot --name "$RMQ_CRM_ATTR_COOKIE" -D
 }
 
-prepare_dir () {
-	if [ ! -d ${1} ] ; then
-		mkdir -p ${1}
-		chown -R rabbitmq:rabbitmq ${1}
-		chmod 755 ${1}
-	fi
-}
-
-remove_pid () {
-	rm -f ${RMQ_PID_FILE} > /dev/null 2>&1
-}
-
-rmq_app_running() {
-	if $RMQ_EVAL 'application:which_applications().' | grep -q '{rabbit,'; then
-		ocf_log debug "RabbitMQ application is running"
-		return $OCF_SUCCESS
-	else
-		ocf_log debug "RabbitMQ application is stopped"
-		rmq_delete_nodename
-		return $OCF_NOT_RUNNING
-	fi
-}
-
-rmq_node_alive() {
-	if $RMQ_EVAL 'ok.'; then
-		ocf_log debug "RabbitMQ node is alive"
-		return $OCF_SUCCESS
-	else
-		ocf_log debug "RabbitMQ node is down"
-		rmq_delete_nodename
-		return $OCF_NOT_RUNNING
-	fi
-}
-
 rmq_monitor() {
 	local rc
 
@@ -229,32 +191,6 @@ rmq_monitor() {
 	fi
 }
 
-rmq_init_and_wait()
-{
-	local rc
-
-	prepare_dir $RMQ_PID_DIR
-	prepare_dir $RMQ_LOG_DIR
-	remove_pid
-
-	# the server startup script uses this environment variable
-	export RABBITMQ_PID_FILE="$RMQ_PID_FILE"
-
-	setsid sh -c "$RMQ_SERVER > ${RMQ_LOG_DIR}/startup_log 2> ${RMQ_LOG_DIR}/startup_err" &
-
-	ocf_log info "Waiting for server to start"
-	$RMQ_CTL wait $RMQ_PID_FILE
-	rc=$?
-	if [ $rc -ne $OCF_SUCCESS ]; then
-		remove_pid
-		ocf_log info "rabbitmq-server start failed: $rc"
-		return $OCF_ERR_GENERIC
-	fi
-
-	rmq_app_running
-	return $?
-}
-
 rmq_set_policy()
 {
 	$RMQ_CTL set_policy "$@" > /dev/null 2>&1
@@ -266,7 +202,7 @@ rmq_start_first()
 
 	ocf_log info "Bootstrapping rabbitmq cluster"
 	rmq_wipe_data
-	rmq_init_and_wait
+	/usr/bin/systemctl start rabbitmq-server
 	rc=$?
 
 	if [ $rc -eq 0 ]; then
@@ -280,7 +216,7 @@ rmq_start_first()
 			if [ $? -ne 0 ]; then
 				ocf_log err "Failed to set policy: $OCF_RESKEY_set_policy"
 				rc=$OCF_ERR_GENERIC
-			else 
+			else
 				ocf_log info "Policy set: $OCF_RESKEY_set_policy"
 			fi
 		fi
@@ -304,7 +240,7 @@ rmq_join_existing()
 	local rc=$OCF_ERR_GENERIC
 
 	ocf_log info "Joining existing cluster with [ $(echo $join_list | tr '\n' ' ') ] nodes."
-	rmq_init_and_wait
+	/usr/bin/systemctl start rabbitmq-server
 	if [ $? -ne 0 ]; then
 		return $OCF_ERR_GENERIC
 	fi
@@ -369,7 +305,7 @@ rmq_notify() {
 
 	rmq_monitor
 	if [ $? -ne $OCF_SUCCESS ]; then
-		# only run forget when we are for sure active 
+		# only run forget when we are for sure active
 		return $OCF_SUCCESS
 	fi
 
@@ -378,7 +314,7 @@ rmq_notify() {
 		local rmq_node="$(${HA_SBIN_DIR}/crm_attribute -N $(ocf_attribute_target $node) -l forever --query --name $RMQ_CRM_ATTR_COOKIE_LAST_KNOWN -q)"
 		if [ -z "$rmq_node" ]; then
 			ocf_log warn "Unable to map pcmk node $node to a known rmq node."
-			continue	
+			continue
 		fi
 		ocf_log notice "Forgetting stopped node $rmq_node"
 		$RMQ_CTL forget_cluster_node $rmq_node
@@ -529,43 +465,11 @@ rmq_stop() {
 		end.
 	"
 
-	rmq_node_alive
-	if [ $? -eq $OCF_NOT_RUNNING ]; then
-		return $OCF_SUCCESS
-	fi
-
-	$RMQ_CTL stop
-	rc=$?
-
-	if [ $rc -ne 0 ]; then
-		ocf_log err "rabbitmq-server stop command failed: $RMQ_CTL stop, $rc"
-		return $rc
-	fi
-
-	#TODO add kill logic
-	stop_wait=1
-	while [ $stop_wait = 1 ]; do
-		rmq_app_running
-		rc=$?
-		if [ "$rc" -eq $OCF_NOT_RUNNING ]; then
-			stop_wait=0
-			break
-		elif [ "$rc" -ne $OCF_SUCCESS ]; then
-			ocf_log info "rabbitmq-server stop failed: $rc"
-			exit $OCF_ERR_GENERIC
-		fi
-		sleep 1
-	done
-
-	rmq_delete_nodename
-	remove_pid
+	/usr/bin/systemctl stop rabbitmq-server
 	return $OCF_SUCCESS
 }
 
 rmq_validate() {
-	check_binary $RMQ_SERVER
-	check_binary $RMQ_CTL
-
 	# This resource only makes sense as a clone right now. at some point
 	# we may want to verify the following.
 	#TODO verify cloned
@@ -573,7 +477,7 @@ rmq_validate() {
 
 	# Given that this resource does the cluster join explicitly,
 	# having a cluster_nodes list in the static config file will
-	# likely conflict with this agent. 
+	# likely conflict with this agent.
 	#TODO verify no cluster list in rabbitmq conf
 	#cat /etc/rabbitmq/rabbitmq.config | grep "cluster_nodes"
 

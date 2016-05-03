@@ -31,7 +31,6 @@
 
 #######################################################################
 
-RMQ_SERVER=/usr/sbin/rabbitmq-server
 RMQ_CTL=/usr/sbin/rabbitmqctl
 RMQ_DATA_DIR="/var/lib/rabbitmq/mnesia"
 NODENAME=$(ocf_local_nodename)
@@ -457,7 +456,6 @@ rmq_stop() {
 }
 
 rmq_validate() {
-	check_binary $RMQ_SERVER
 	check_binary $RMQ_CTL
 
 	# This resource only makes sense as a clone right now. at some point

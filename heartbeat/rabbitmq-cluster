@@ -34,9 +34,6 @@
 RMQ_SERVER=/usr/sbin/rabbitmq-server
 RMQ_CTL=/usr/sbin/rabbitmqctl
 RMQ_DATA_DIR="/var/lib/rabbitmq/mnesia"
-RMQ_PID_DIR="/var/run/rabbitmq"
-RMQ_PID_FILE="/var/run/rabbitmq/rmq.pid"
-RMQ_LOG_DIR="/var/log/rabbitmq"
 NODENAME=$(ocf_local_nodename)
 
 # this attr represents the current active local rmq node name.
@@ -158,18 +155,6 @@ rmq_delete_nodename()
 	${HA_SBIN_DIR}/crm_attribute -N $NODENAME -l reboot --name "$RMQ_CRM_ATTR_COOKIE" -D
 }
 
-prepare_dir () {
-	if [ ! -d ${1} ] ; then
-		mkdir -p ${1}
-		chown -R rabbitmq:rabbitmq ${1}
-		chmod 755 ${1}
-	fi
-}
-
-remove_pid () {
-	rm -f ${RMQ_PID_FILE} > /dev/null 2>&1
-}
-
 rmq_monitor() {
 	local rc
 
@@ -199,20 +184,10 @@ rmq_init_and_wait()
 {
 	local rc
 
-	prepare_dir $RMQ_PID_DIR
-	prepare_dir $RMQ_LOG_DIR
-	remove_pid
+	/usr/bin/systemctl start rabbitmq-server
 
-	# the server startup script uses this environment variable
-	export RABBITMQ_PID_FILE="$RMQ_PID_FILE"
-
-	setsid sh -c "$RMQ_SERVER > ${RMQ_LOG_DIR}/startup_log 2> ${RMQ_LOG_DIR}/startup_err" &
-
-	ocf_log info "Waiting for server to start"
-	$RMQ_CTL wait $RMQ_PID_FILE
 	rc=$?
 	if [ $rc -ne $OCF_SUCCESS ]; then
-		remove_pid
 		ocf_log info "rabbitmq-server start failed: $rc"
 		return $OCF_ERR_GENERIC
 	fi
@@ -477,35 +452,7 @@ rmq_stop() {
 		end.
 	"
 
-	rmq_monitor
-	if [ $? -eq $OCF_NOT_RUNNING ]; then
-		return $OCF_SUCCESS
-	fi
-
-	$RMQ_CTL stop
-	rc=$?
-
-	if [ $rc -ne 0 ]; then
-		ocf_log err "rabbitmq-server stop command failed: $RMQ_CTL stop, $rc"
-		return $rc
-	fi
-
-	#TODO add kill logic
-	stop_wait=1
-	while [ $stop_wait = 1 ]; do
-		rmq_monitor
-		rc=$?
-		if [ "$rc" -eq $OCF_NOT_RUNNING ]; then
-			stop_wait=0
-			break
-		elif [ "$rc" -ne $OCF_SUCCESS ]; then
-			ocf_log info "rabbitmq-server stop failed: $rc"
-			exit $OCF_ERR_GENERIC
-		fi
-		sleep 1
-	done
-
-	remove_pid
+	/usr/bin/systemctl stop rabbitmq-server
 	return $OCF_SUCCESS
 }
 

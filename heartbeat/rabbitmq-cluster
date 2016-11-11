@@ -61,12 +61,21 @@ Starts cloned rabbitmq cluster instance
 <shortdesc lang="en">rabbitmq clustered</shortdesc>
 
 <parameters>
+
 <parameter name="set_policy" unique="1">
 <longdesc lang="en">
 Policy string to pass to 'rabbitmqctl set_policy' right after bootstrapping the first rabbitmq instance.
 </longdesc>
 <shortdesc lang="en">rabbitmqctl set_policy args</shortdesc>
 <content type="string" default="" />
+</parameter>
+
+<parameter name="maxfds" required="0">
+<longdesc lang="en">
+Set maximum number of open files (for ulimit -n).
+</longdesc>
+<shortdesc lang="en">Max open files</shortdesc>
+<content type="integer" />
 </parameter>
 
 </parameters>
@@ -341,6 +350,15 @@ rmq_start() {
 	rmq_monitor
 	if [ $? -eq $OCF_SUCCESS ]; then
 		return $OCF_SUCCESS
+	fi
+
+	# set maximum number of open files if requested
+	if [ -n "$OCF_RESKEY_maxfds" ]; then
+		ulimit -n $OCF_RESKEY_maxfds
+		rc=$?
+		if [ "$rc" -ne 0 ]; then
+			ocf_log warn "Could not set ulimit for open files to '$OCF_RESKEY_maxfds'"
+		fi
 	fi
 
 	join_list=$(rmq_join_list)
